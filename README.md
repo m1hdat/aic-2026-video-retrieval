@@ -1,119 +1,362 @@
-# Text-Image Retrieval Demo
+# AIC 2026 Video Retrieval System
 
-This demo builds an image search system using text queries with CLIP and Milvus. The default dataset points to Flickr8k, which has already been downloaded in the workspace at `flickr8k/versions/1`.
+A web-based retrieval system developed for the **AI Challenge 2026 (AIC 2026)**.
 
-## Architecture
+The system is designed to support all preliminary round retrieval tasks:
 
-Main processing flow:
+- Textual Known-Item Search (Textual KIS)
+- Question Answering (Q&A)
+- Temporal Reasoning and Knowledge Extraction (TRAKE)
 
-1. Read images and captions from Flickr8k.
-2. Normalize the metadata into `data/processed/image_metadata.csv`.
-3. Encode images with CLIP offline on Kaggle and export `image_embeddings.npy`.
-4. Store precomputed embeddings, image paths, and captions in Milvus.
-5. Encode the text query with CLIP and search for the nearest images in Milvus.
-6. Display the results using Gradio.
+Current frontend is developed with **Gradio** and can run in two modes:
 
-## Installation
+- **Mock Mode** (no dataset required)
+- **Real Mode** (Milvus + processed AIC dataset)
+
+---
+
+# Project Structure
+
+```
+AIC26_web/
+
+├── assets/
+├── configs/
+├── data/
+│   ├── raw/
+│   └── processed/
+│
+├── frontend/
+│   ├── gradio_app.py
+│   └── components/
+│
+├── notebooks/
+├── outputs/
+├── scripts/
+├── src/
+│
+├── docker-compose.yml
+├── requirements.txt
+└── README.md
+```
+
+---
+
+# System Architecture
+
+```
+User Query
+      │
+      ▼
+Gradio Frontend
+      │
+      ▼
+Retrieval Service
+      │
+      ▼
+Search Engine
+      │
+      ▼
+CLIP Text Encoder
+      │
+      ▼
+Milvus Vector Database
+      │
+      ▼
+Retrieved Keyframes
+      │
+      ▼
+Frontend Result Browser
+      │
+      ▼
+Answer Queue
+      │
+      ▼
+Submission CSV
+```
+
+---
+
+# Installation
+
+Clone repository
 
 ```bash
-conda create -n text-image-retrieval python=3.11 -y
-conda activate text-image-retrieval
+git clone https://github.com/m1hdat/aic-2026-4funXD.git
+
+cd AIC26_web
+```
+
+Create virtual environment
+
+```bash
+python -m venv venv
+```
+
+Windows
+
+```bash
+venv\Scripts\activate
+```
+
+Linux
+
+```bash
+source venv/bin/activate
+```
+
+Install dependencies
+
+```bash
 pip install -r requirements.txt
 ```
 
-If PowerShell does not recognize the `conda` command, run the commands above in Anaconda Prompt.
+---
 
-After installation, quickly check the environment:
+# Run Frontend (Mock Mode)
 
-```bash
-python --version
-python -c "import torch, transformers, pymilvus, gradio; print('Environment is ready')"
+Mock mode **does not require**
+
+- dataset
+- Milvus
+- Docker
+
+Enable mock mode
+
+Windows PowerShell
+
+```powershell
+$env:USE_MOCK="true"
 ```
 
-## Run Milvus
+CMD
+
+```cmd
+set USE_MOCK=true
+```
+
+Run
+
+```bash
+python frontend/gradio_app.py
+```
+
+Open browser
+
+```
+http://127.0.0.1:7860
+```
+
+Current features
+
+- Textual KIS
+- Q&A
+- TRAKE
+- Gallery
+- Answer Queue
+- Export CSV
+- Save Session
+- Load Session
+
+---
+
+# Run Backend (Real Mode)
+
+After the AIC dataset has been processed.
+
+Start Milvus
 
 ```bash
 docker compose up -d
 ```
 
-Milvus standalone will be available on port `19530`.
+Disable mock mode
 
-## Encode Images Offline on Kaggle
+Windows PowerShell
 
-The local indexing script does not encode images directly. It loads precomputed CLIP image vectors from:
-
-```text
-data/processed/image_embeddings.npy
+```powershell
+$env:USE_MOCK="false"
 ```
 
-Run this script on Kaggle with the Flickr8k dataset attached:
+Run frontend
 
 ```bash
-python scripts/kaggle_encode_images.py
-```
-
-You can also use this sample Kaggle notebook as a reference:
-
-```text
-https://www.kaggle.com/code/ericnguyen1203/encode-image-offline
-```
-
-The Kaggle script writes these files to `/kaggle/working`:
-
-```text
-image_metadata.csv
-image_embeddings.npy
-```
-
-Download both files from Kaggle and place them here:
-
-```text
-data/processed/image_metadata.csv
-data/processed/image_embeddings.npy
-```
-
-Important: `image_metadata.csv` and `image_embeddings.npy` must have the same row order. The Kaggle script already guarantees this when both files come from the same run.
-
-## Run Step by Step
-
-After downloading `image_metadata.csv` and `image_embeddings.npy` from Kaggle into `data/processed`, run:
-
-```bash
-python scripts/02_create_collection.py
-python scripts/03_index_images.py
-python scripts/04_test_search.py
 python frontend/gradio_app.py
 ```
 
-Only run `python scripts/01_prepare_dataset.py` if you want to regenerate metadata locally. Do not run it after downloading Kaggle metadata unless you are sure the local metadata order matches the `.npy` embedding order.
+---
 
-Make sure the Conda environment is activated before running the commands:
+# Dataset Pipeline
 
-```bash
-conda activate text-image-retrieval
+```
+Raw Dataset
+        │
+        ▼
+scripts/
+        │
+        ▼
+Processed Metadata
+Processed Embeddings
+        │
+        ▼
+Milvus Collection
+        │
+        ▼
+Search Engine
+        │
+        ▼
+Frontend
 ```
 
-## Configuration
+---
 
-Main configuration file: `configs/config.yaml`
+# Data Structure
 
-Default paths:
+```
+data/
 
-* Images: `flickr8k/versions/1/Images`
-* Captions: `flickr8k/versions/1/captions.txt`
-* Processed metadata: `data/processed/image_metadata.csv`
-* Precomputed image embeddings: `data/processed/image_embeddings.npy`
+raw/
 
-If you want to change the dataset to `data/raw/flickr8k_sample`, simply update `image_dir` and `captions_path` in `configs/config.yaml`.
+    aic/
 
-## Sample Queries
+        videos/
 
-Some queries you can try:
+        keyframes/
 
-* `a dog running on the grass`
-* `a man riding a bicycle`
-* `a child playing outside`
-* `two dogs playing together`
-* `a soccer player kicking a ball`
+        metadata/
 
-A longer list is available in `data/sample_queries.txt`.
+        objects/
+
+processed/
+
+    aic/
+
+        keyframe_metadata.csv
+
+        keyframe_embeddings.npy
+```
+
+---
+
+# Main Components
+
+Frontend
+
+```
+frontend/
+
+gradio_app.py
+
+components/
+
+    kis_tab.py
+
+    qa_tab.py
+
+    trake_tab.py
+
+    result_browser.py
+
+    answer_queue.py
+```
+
+Backend
+
+```
+src/
+
+clip_encoder.py
+
+search_engine.py
+
+milvus_client.py
+
+retrieval_service.py
+
+submission_manager.py
+
+video_service.py
+```
+
+---
+
+# Configuration
+
+Main configuration
+
+```
+configs/config.yaml
+```
+
+Modify
+
+- model
+- dataset path
+- Milvus collection
+- search parameters
+
+without changing source code.
+
+---
+
+# Development Workflow
+
+Stage 1
+
+Frontend development
+
+```
+Mock Mode
+```
+
+Stage 2
+
+Dataset preprocessing
+
+```
+scripts/
+```
+
+Stage 3
+
+Milvus indexing
+
+```
+indexer.py
+```
+
+Stage 4
+
+Retrieval integration
+
+```
+search_engine.py
+```
+
+Stage 5
+
+Evaluation
+
+```
+submission CSV
+```
+
+---
+
+# Technologies
+
+- Python
+- Gradio
+- PyTorch
+- Transformers
+- Milvus
+- Docker
+- OpenCV
+
+---
+
+# Team
+
+AI Challenge 2026
+
+Video Retrieval System
