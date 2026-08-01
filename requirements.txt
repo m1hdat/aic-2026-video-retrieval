@@ -1,0 +1,9 @@
+torch
+transformers
+pillow
+numpy
+pandas
+pymilvus
+gradio
+tqdm
+pyyaml

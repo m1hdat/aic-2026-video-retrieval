@@ -1,0 +1,26 @@
+model:
+  name: openai/clip-vit-base-patch32
+  embedding_dim: 512
+  device: auto
+
+milvus:
+  host: localhost
+  port: 19530
+  collection_name: text_image_retrieval
+  metric_type: IP
+  index_type: IVF_FLAT
+  nlist: 128
+  nprobe: 10
+
+data:
+  image_dir: data/raw/images
+  captions_path: data/raw/captions.txt
+  metadata_path: data/processed/image_metadata.csv
+  embeddings_path: data/processed/image_embeddings.npy
+
+indexing:
+  batch_size: 256
+  max_images:
+
+search:
+  top_k: 5
