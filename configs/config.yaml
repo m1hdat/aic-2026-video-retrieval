@@ -1,26 +1,17 @@
+milvus:
+  mode: lite
+  uri: data/milvus/aic2026_milvus.db
+  collection_name: aic2026_keyframes
+  metric_type: IP
+
 model:
   name: openai/clip-vit-base-patch32
   embedding_dim: 512
-  device: auto
-
-milvus:
-  host: localhost
-  port: 19530
-  collection_name: text_image_retrieval
-  metric_type: IP
-  index_type: IVF_FLAT
-  nlist: 128
-  nprobe: 10
 
 data:
-  image_dir: data/raw/images
-  captions_path: data/raw/captions.txt
-  metadata_path: data/processed/image_metadata.csv
-  embeddings_path: data/processed/image_embeddings.npy
+  manifest_keyframes: data/processed/manifest_keyframes.parquet
+  manifest_videos: data/processed/manifest_videos.parquet
 
-indexing:
-  batch_size: 256
-  max_images:
-
-search:
-  top_k: 5
+app:
+  use_mock: false
+  top_k: 100

@@ -5,8 +5,8 @@ from typing import Any
 import gradio as gr
 import pandas as pd
 
-from frontend.components.answer_queue import build_answer_queue
-from frontend.components.shared import normalize_select_index, parse_events, safe_int
+from web.components.answer_queue import build_answer_queue
+from web.components.shared import normalize_select_index, parse_events, safe_int
 
 
 def build_trake_tab(

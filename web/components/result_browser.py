@@ -4,7 +4,7 @@ from typing import Any
 
 import gradio as gr
 
-from frontend.components.shared import RESULT_HEADERS, normalize_select_index
+from web.components.shared import RESULT_HEADERS, normalize_select_index
 
 
 def select_gallery_item(
@@ -24,7 +24,7 @@ def select_gallery_item(
     frame_id = int(selected.get("frame_id", 0))
     keyframe_id = str(selected.get("keyframe_id", ""))
     score = float(selected.get("score", 0.0))
-    image_path = str(selected.get("image_path", ""))
+    image_path = selected.get("image_path")
     video_path = selected.get("video_path")
 
     preview_path = video_service.create_preview(video_path, frame_id)
@@ -39,6 +39,8 @@ def select_gallery_item(
         f"**Đã chọn:** `{video_id}` — frame `{frame_id}`  \n"
         f"Keyframe: `{keyframe_id}`  \n"
         f"Score: `{score:.4f}`  \n"
+        f"Timestamp: `{selected.get('timestamp_sec', 'N/A')}` s  \
+"
         f"Objects: `{objects_text or 'N/A'}`"
     )
 
@@ -67,7 +69,7 @@ def build_result_browser(video_service: Any, label_prefix: str = "") -> dict[str
 
     result_table = gr.Dataframe(
         headers=RESULT_HEADERS,
-        datatype=["number", "number", "str", "number", "str", "str", "str"],
+        datatype=["number", "number", "str", "number", "str", "number", "str", "str"],
         label="Chi tiết kết quả",
         interactive=False,
         wrap=True,

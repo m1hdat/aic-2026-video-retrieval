@@ -1,17 +1,19 @@
 # AIC 2026 Video Retrieval System
 
-A web-based retrieval system developed for the **AI Challenge 2026 (AIC 2026)**.
+Hệ thống Video Retrieval được phát triển cho cuộc thi **AI Challenge 2026 (AIC 2026)**.
 
-The system is designed to support all preliminary round retrieval tasks:
+Project hỗ trợ toàn bộ các bài toán của vòng sơ tuyển:
 
-- Textual Known-Item Search (Textual KIS)
+- Textual Known-Item Search (KIS)
 - Question Answering (Q&A)
 - Temporal Reasoning and Knowledge Extraction (TRAKE)
 
-Current frontend is developed with **Gradio** and can run in two modes:
+Hệ thống sử dụng:
 
-- **Mock Mode** (no dataset required)
-- **Real Mode** (Milvus + processed AIC dataset)
+- CLIP để mã hóa truy vấn văn bản
+- Milvus để tìm kiếm vector
+- Gradio để xây dựng giao diện Web
+- Docker để triển khai Milvus Server
 
 ---
 
@@ -20,20 +22,25 @@ Current frontend is developed with **Gradio** and can run in two modes:
 ```
 AIC26_web/
 
-├── assets/
-├── configs/
+├── assets/                 # Ảnh, icon và tài nguyên giao diện
+
+├── configs/                # File cấu hình hệ thống
+│   └── config.yaml
+
 ├── data/
-│   ├── raw/
-│   └── processed/
+│   ├── milvus/             # Milvus Lite database (nếu dùng Lite)
+│   ├── processed/          # Manifest sau khi preprocess
+│   └── raw/                # Dataset AIC (nếu lưu local)
+
+├── notebooks/              # Notebook preprocess và build Milvus
+
+├── outputs/                # Docker runtime (Milvus, MinIO, etcd...)
+
+├── scripts/                # Script tạo Collection, Index, Test Retrieval
+
+├── src/                    # Backend của hệ thống
 │
-├── frontend/
-│   ├── gradio_app.py
-│   └── components/
-│
-├── notebooks/
-├── outputs/
-├── scripts/
-├── src/
+├── web/                    # Giao diện Gradio
 │
 ├── docker-compose.yml
 ├── requirements.txt
@@ -42,44 +49,274 @@ AIC26_web/
 
 ---
 
-# System Architecture
+# Chức năng của từng thư mục
+
+## configs/
+
+Quản lý toàn bộ cấu hình của project.
+
+Ví dụ:
+
+- Model CLIP
+- Đường dẫn dataset
+- Milvus
+- Search parameters
+
+---
+
+## data/
+
+Chứa dữ liệu sử dụng trong hệ thống.
+
+### processed/
+
+Sau khi preprocess sẽ sinh ra:
 
 ```
-User Query
-      │
-      ▼
-Gradio Frontend
-      │
-      ▼
-Retrieval Service
-      │
-      ▼
-Search Engine
-      │
-      ▼
+manifest_keyframes.parquet
+manifest_videos.parquet
+```
+
+Đây là metadata dùng trong Retrieval.
+
+---
+
+### milvus/
+
+Nếu chạy Milvus Lite:
+
+```
+aic2026_milvus.db
+```
+
+Nếu dùng Docker thì thư mục này không cần.
+
+---
+
+### raw/
+
+Nếu lưu dataset local:
+
+```
+Part1
+Part2
+Part3
+Part4
+```
+
+---
+
+## notebooks/
+
+Notebook chạy trên Kaggle.
+
+Bao gồm:
+
+- preprocess từng Part
+- merge dataset
+- build Milvus
+
+---
+
+## scripts/
+
+Các script backend.
+
+Ví dụ:
+
+```
+01_prepare_dataset.py
+
+02_create_collection.py
+
+03_index_images.py
+
+04_test_search.py
+
+05_reset_collection.py
+```
+
+---
+
+## src/
+
+Toàn bộ backend của hệ thống.
+
+Bao gồm:
+
+- CLIP Encoder
+- Milvus Client
+- Search Engine
+- Metadata
+- Retrieval Service
+- Video Service
+- Submission Manager
+
+---
+
+## web/
+
+Giao diện Gradio.
+
+Bao gồm:
+
+- KIS
+- Q&A
+- TRAKE
+- Gallery
+- Answer Queue
+- Export CSV
+
+---
+
+# System Pipeline
+
+## 1. Dataset Preprocessing
+
+BTC cung cấp:
+
+```
+Videos
+Keyframes
+CLIP Features
+Metadata
+Objects
+```
+
+↓
+
+Notebook preprocess tạo:
+
+```
+manifest_keyframes.parquet
+
+manifest_videos.parquet
+```
+
+↓
+
+Merge toàn bộ 4 Part thành một bộ metadata thống nhất.
+
+---
+
+## 2. Build Milvus
+
+Đọc:
+
+```
+manifest_keyframes.parquet
+
+CLIP Features (.npy)
+```
+
+↓
+
+Tạo Collection trong Milvus.
+
+Milvus lưu:
+
+- embedding
+- video_id
+- frame_id
+- timestamp
+- keyframe path
+- video path
+
+---
+
+## 3. Retrieval
+
+Người dùng nhập:
+
+```
+Text Query
+```
+
+↓
+
 CLIP Text Encoder
-      │
-      ▼
-Milvus Vector Database
-      │
-      ▼
-Retrieved Keyframes
-      │
-      ▼
-Frontend Result Browser
-      │
-      ▼
-Answer Queue
-      │
-      ▼
+
+↓
+
+Vector Query
+
+↓
+
+Milvus Search
+
+↓
+
+Top-K Keyframes
+
+↓
+
+Metadata
+
+↓
+
+Hiển thị lên Web
+
+---
+
+## 4. User Interaction
+
+Người dùng có thể:
+
+- xem keyframe
+- xem video
+- chọn kết quả
+- thêm vào Answer Queue
+- xuất Submission CSV
+
+---
+
+# Development Workflow
+
+```
+BTC Dataset
+
+        │
+
+        ▼
+
+Notebook Preprocessing
+
+        │
+
+        ▼
+
+Merge Dataset
+
+        │
+
+        ▼
+
+Build Milvus
+
+        │
+
+        ▼
+
+Search Engine
+
+        │
+
+        ▼
+
+Web Interface
+
+        │
+
+        ▼
+
 Submission CSV
 ```
 
 ---
 
-# Installation
+# Clone & Run Project
 
-Clone repository
+## 1. Clone project
 
 ```bash
 git clone https://github.com/m1hdat/aic-2026-4funXD.git
@@ -87,25 +324,29 @@ git clone https://github.com/m1hdat/aic-2026-4funXD.git
 cd AIC26_web
 ```
 
-Create virtual environment
+---
 
-```bash
-python -m venv venv
-```
+## 2. Tạo môi trường
 
 Windows
 
 ```bash
+python -m venv venv
+
 venv\Scripts\activate
 ```
 
 Linux
 
 ```bash
+python3 -m venv venv
+
 source venv/bin/activate
 ```
 
-Install dependencies
+---
+
+## 3. Cài đặt thư viện
 
 ```bash
 pip install -r requirements.txt
@@ -113,244 +354,112 @@ pip install -r requirements.txt
 
 ---
 
-# Run Frontend (Mock Mode)
+## 4. Chuẩn bị dữ liệu
 
-Mock mode **does not require**
+### Sau khi preprocess
 
-- dataset
-- Milvus
-- Docker
-
-Enable mock mode
-
-Windows PowerShell
-
-```powershell
-$env:USE_MOCK="true"
-```
-
-CMD
-
-```cmd
-set USE_MOCK=true
-```
-
-Run
-
-```bash
-python frontend/gradio_app.py
-```
-
-Open browser
+Đặt các file:
 
 ```
-http://127.0.0.1:7860
+data/
+
+processed/
+
+    manifest_keyframes.parquet
+
+    manifest_videos.parquet
 ```
 
-Current features
+Nếu dùng Milvus Lite:
 
-- Textual KIS
-- Q&A
-- TRAKE
-- Gallery
-- Answer Queue
-- Export CSV
-- Save Session
-- Load Session
+```
+data/
+
+milvus/
+
+    aic2026_milvus.db
+```
 
 ---
 
-# Run Backend (Real Mode)
+## 5. Chạy Milvus
 
-After the AIC dataset has been processed.
+### Milvus Lite
 
-Start Milvus
+Không cần Docker.
+
+Trong `config.yaml`:
+
+```yaml
+milvus:
+    mode: lite
+```
+
+---
+
+### Milvus Standalone (Khuyến nghị)
 
 ```bash
 docker compose up -d
 ```
 
-Disable mock mode
+Trong `config.yaml`
 
-Windows PowerShell
-
-```powershell
-$env:USE_MOCK="false"
+```yaml
+milvus:
+    mode: server
 ```
 
-Run frontend
+---
+
+## 6. Kiểm tra Retrieval
 
 ```bash
-python frontend/gradio_app.py
+python -m scripts.04_test_search "một người đang lái xe máy" --top-k 10
+```
+
+Nếu hiển thị:
+
+```
+Top-10 Results
+```
+
+thì Milvus hoạt động bình thường.
+
+---
+
+## 7. Chạy Web
+
+```bash
+python -m web.gradio_app
+```
+
+Mở trình duyệt:
+
+```
+http://127.0.0.1:7860
 ```
 
 ---
 
-# Dataset Pipeline
+## 8. Thực hiện Retrieval
 
-```
-Raw Dataset
-        │
-        ▼
-scripts/
-        │
-        ▼
-Processed Metadata
-Processed Embeddings
-        │
-        ▼
-Milvus Collection
-        │
-        ▼
-Search Engine
-        │
-        ▼
-Frontend
-```
+- Nhập truy vấn
+- Xem kết quả
+- Chọn đáp án
+- Export CSV
 
 ---
 
-# Data Structure
-
-```
-data/
-
-raw/
-
-    aic/
-
-        videos/
-
-        keyframes/
-
-        metadata/
-
-        objects/
-
-processed/
-
-    aic/
-
-        keyframe_metadata.csv
-
-        keyframe_embeddings.npy
-```
-
----
-
-# Main Components
-
-Frontend
-
-```
-frontend/
-
-gradio_app.py
-
-components/
-
-    kis_tab.py
-
-    qa_tab.py
-
-    trake_tab.py
-
-    result_browser.py
-
-    answer_queue.py
-```
-
-Backend
-
-```
-src/
-
-clip_encoder.py
-
-search_engine.py
-
-milvus_client.py
-
-retrieval_service.py
-
-submission_manager.py
-
-video_service.py
-```
-
----
-
-# Configuration
-
-Main configuration
-
-```
-configs/config.yaml
-```
-
-Modify
-
-- model
-- dataset path
-- Milvus collection
-- search parameters
-
-without changing source code.
-
----
-
-# Development Workflow
-
-Stage 1
-
-Frontend development
-
-```
-Mock Mode
-```
-
-Stage 2
-
-Dataset preprocessing
-
-```
-scripts/
-```
-
-Stage 3
-
-Milvus indexing
-
-```
-indexer.py
-```
-
-Stage 4
-
-Retrieval integration
-
-```
-search_engine.py
-```
-
-Stage 5
-
-Evaluation
-
-```
-submission CSV
-```
-
----
-
-# Technologies
+# Công nghệ sử dụng
 
 - Python
-- Gradio
 - PyTorch
 - Transformers
+- CLIP
 - Milvus
 - Docker
+- Gradio
 - OpenCV
 
 ---

@@ -167,3 +167,11 @@ assets/mock/**
 build/
 dist/
 *.egg-info/
+
+data/milvus/
+outputs/
+data/raw/
+venv/
+__pycache__/
+*.pyc
+.env

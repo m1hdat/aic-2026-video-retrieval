@@ -1,27 +1,23 @@
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT_ROOT))
+import argparse
 
 from src.config import load_config
-from src.milvus_client import connect_milvus, create_collection, drop_collection
+from src.milvus_client import MilvusManager
 
 
 def main() -> None:
-    config = load_config()
-    milvus_config = config["milvus"]
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--yes", action="store_true", help="Confirm destructive reset")
+    args = parser.parse_args()
+    if not args.yes:
+        raise SystemExit("Dùng --yes để xác nhận xóa collection.")
 
-    connect_milvus(host=milvus_config["host"], port=milvus_config["port"])
-    drop_collection(milvus_config["collection_name"])
-    collection = create_collection(config)
-
-    print(f"Reset collection: {collection.name}")
+    manager = MilvusManager(load_config())
+    manager.drop()
+    manager.ensure_collection(drop_existing=False)
+    print(f"Reset collection: {manager.collection_name}")
 
 
 if __name__ == "__main__":
     main()
-

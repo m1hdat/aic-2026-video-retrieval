@@ -4,9 +4,9 @@ from typing import Any
 
 import gradio as gr
 
-from frontend.components.answer_queue import build_answer_queue
-from frontend.components.result_browser import build_result_browser
-from frontend.components.shared import results_to_outputs, safe_int
+from web.components.answer_queue import build_answer_queue
+from web.components.result_browser import build_result_browser
+from web.components.shared import results_to_outputs, safe_int
 
 
 def build_qa_tab(
