@@ -1,86 +1,85 @@
 from __future__ import annotations
-
-from typing import Any
-
-from src.clip_encoder import ClipEncoder
-from src.metadata_store import MetadataStore
-from src.milvus_client import MilvusManager
-from src.path_resolver import PathResolver
-from src.query_expansion import QueryExpander
-
+from collections import defaultdict
+from pymilvus import MilvusClient
+from .clip_encoder import TextEncoder
+from .db import fetch_metadata
+from .settings import settings
+from .frame_refiner import FrameRefiner
+from .translator import Translator
 
 class SearchEngine:
-    def __init__(
-        self,
-        config: dict[str, Any],
-        encoder: ClipEncoder | None = None,
-        milvus: MilvusManager | None = None,
-    ) -> None:
-        self.config = config
-        self.encoder = encoder or ClipEncoder(
-            model_name=config["model"]["name"],
-            device=config["model"].get("device", "auto"),
-        )
-        self.milvus = milvus or MilvusManager(config)
-        if not self.milvus.collection_exists():
-            raise RuntimeError(
-                f"Collection '{self.milvus.collection_name}' chưa tồn tại. "
-                "Hãy build/index Milvus trước khi chạy web."
-            )
+    def __init__(self):
+        self.client = MilvusClient(uri=settings.milvus_uri)
+        self.encoder = TextEncoder()
+        self.refiner = FrameRefiner(self.encoder)
+        self.translator = Translator()
 
-        search_cfg = config.get("search", {})
-        self.expander = QueryExpander(
-            templates=search_cfg.get("expansion_templates"),
-            max_variants=search_cfg.get("max_variants", 3),
-        )
-        self.metadata = MetadataStore(config.get("paths", {}).get("manifest_keyframes"))
-        self.paths = PathResolver(config.get("paths", {}).get("part_roots", {}))
+    @staticmethod
+    def _variants(query: str) -> list[str]:
+        q = query.strip()
+        return list(dict.fromkeys([q, f"a photo of {q}", f"a video frame showing {q}"]))
 
-    def search_by_text(self, query: str, top_k: int | None = None) -> list[dict[str, Any]]:
-        cleaned = " ".join((query or "").split())
-        if not cleaned:
-            return []
+    def search_by_text(self, query: str, top_k: int = 100) -> list[dict]:
+        variants = self._variants(self.translator.to_english(query))
+        vectors = self.encoder.encode(variants)
+        fused: dict[int, dict] = {}
+        for result_set in self.client.search(
+            collection_name=settings.collection,
+            data=vectors.tolist(), limit=max(150, top_k),
+            output_fields=["video_id", "keyframe_n"],
+            search_params={"metric_type":"COSINE", "params":{"nprobe":64}},
+        ):
+            for rank, hit in enumerate(result_set, 1):
+                pk = int(hit["id"])
+                score = 1.0 / (60 + rank)  # reciprocal-rank fusion
+                item = fused.setdefault(pk, {"rrf":0.0, "hit":hit})
+                item["rrf"] += score
+                if hit["distance"] > item["hit"]["distance"]:
+                    item["hit"] = hit
+        ordered = sorted(fused.values(), key=lambda x:x["rrf"], reverse=True)[:top_k]
+        keys = [(x["hit"]["entity"]["video_id"], int(x["hit"]["entity"]["keyframe_n"])) for x in ordered]
+        metadata = fetch_metadata(keys)
+        output = []
+        for rank, (entry, key) in enumerate(zip(ordered, keys), 1):
+            row = metadata.get(key)
+            if not row:
+                continue
+            output.append({"rank":rank, "score":float(entry["hit"]["distance"]), **row})
+        return output
 
-        search_cfg = self.config.get("search", {})
-        limit = int(top_k or search_cfg.get("top_k", 100))
-        variants = self.expander.expand(cleaned) if search_cfg.get("query_expansion", True) else []
-        if not variants:
-            variants = self.expander.expand(cleaned)[:1]
-
-        per_variant = max(limit, int(search_cfg.get("per_variant_top_k", limit)))
-        fused: dict[int, dict[str, Any]] = {}
-
-        for variant in variants:
-            vector = self.encoder.encode_text(variant.text)
-            for hit in self.milvus.search(vector, top_k=per_variant):
-                item = fused.setdefault(hit["id"], {**hit, "fused_score": 0.0, "matched_queries": []})
-                item["fused_score"] += variant.weight * float(hit["score"])
-                item["score"] = max(float(item.get("score", -1e9)), float(hit["score"]))
-                item["matched_queries"].append(variant.text)
-
-        results = sorted(fused.values(), key=lambda x: x["fused_score"], reverse=True)[:limit]
-        for rank, item in enumerate(results, start=1):
-            item["rank"] = rank
-            item["score"] = float(item["fused_score"] / max(1, len(variants)))
-            item = self.metadata.enrich(item)
-            source_part = item.get("source_part")
-            item["image_path"] = self.paths.resolve(
-                source_part,
-                item.get("keyframe_relpath"),
-                item.get("keyframe_path"),
-            )
-            item["video_path"] = self.paths.resolve(
-                source_part,
-                item.get("video_relpath"),
-                item.get("video_path"),
-            )
-            item["keyframe_id"] = str(item.get("keyframe_id") or str(item.get("keyframe_relpath", "")).split("/")[-1].split(".")[0])
-            results[rank - 1] = item
-        return results
-
-
-def format_search_results(results: list[dict[str, Any]]) -> str:
-    return "\n".join(
-        f'{item["rank"]}. {item.get("video_id")} frame={item.get("frame_id")} score={item.get("score", 0):.4f}'
-        for item in results
-    )
+    def search_sequence(self, events: list[str], top_videos: int = 10) -> list[dict]:
+        english_events=[self.translator.to_english(e) for e in events if e.strip()]
+        per_event = [self.search_by_text(e, 300) for e in english_events]
+        by_video = defaultdict(lambda: defaultdict(list))
+        for ei, rows in enumerate(per_event):
+            for r in rows:
+                by_video[r["video_id"]][ei].append(r)
+        candidates=[]
+        for vid, hits in by_video.items():
+            if len(hits) != len(per_event):
+                continue
+            # Dynamic programming: globally optimal increasing sequence, not greedy.
+            layers=[sorted(hits[i][:120],key=lambda r:r['frame_idx']) for i in range(len(per_event))]
+            states=[(r['score'],[r]) for r in layers[0]]
+            for layer in layers[1:]:
+                nxt=[]
+                for r in layer:
+                    prev=[s for s in states if s[1][-1]['frame_idx']<r['frame_idx']]
+                    if prev:
+                        score,path=max(prev,key=lambda x:x[0]); nxt.append((score+r['score'],path+[r]))
+                states=nxt
+                if not states: break
+            if states: total,selected=max(states,key=lambda x:x[0])
+            else: selected=[]; total=0.0
+            if len(selected)==len(per_event):
+                candidates.append({"video_id":vid,"score":total/len(selected),"hits":selected})
+        candidates.sort(key=lambda x:x["score"], reverse=True)
+        output=[]
+        for i,x in enumerate(candidates[:top_videos]):
+            refined=[]
+            for event,hit in zip(english_events,x['hits']):
+                rr=(self.refiner.refine(x['video_id'],hit['frame_idx'],hit.get('fps') or 0,event)
+                    if i < settings.trake_refine_top_n else {'frame_idx':hit['frame_idx'],'refined':False})
+                refined.append({**hit,**rr})
+            output.append({'rank':i+1,**x,'hits':refined})
+        return output

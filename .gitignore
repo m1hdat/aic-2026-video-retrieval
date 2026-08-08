@@ -1,177 +1,21 @@
-# =========================
-# Python
-# =========================
-__pycache__/
-*.py[cod]
-*$py.class
-*.pyd
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.coverage
-coverage.xml
-htmlcov/
-
-# =========================
-# Virtual environments
-# =========================
-venv/
-.venv/
-env/
-ENV/
-
-# =========================
-# Secrets / local environment
-# =========================
 .env
-.env.*
-!.env.example
-*.key
-*.pem
-kaggle.json
-.kaggle/
-.kagglehub/
-
-# =========================
-# IDE / editor
-# =========================
-.vscode/
-.idea/
-*.code-workspace
-
-# =========================
-# Operating system
-# =========================
-.DS_Store
-Thumbs.db
-desktop.ini
-
-# =========================
-# Logs and temporary files
-# =========================
-*.log
-*.tmp
-*.temp
-*.bak
-*.swp
-~$*
-
-# =========================
-# Archives
-# =========================
-*.zip
-*.rar
-*.7z
-*.tar
-*.tar.gz
-*.tgz
-
-# =========================
-# Raw datasets
-# Keep only .gitkeep files so the folder structure remains in Git
-# =========================
-data/raw/**
-!data/raw/.gitkeep
-!data/raw/**/.gitkeep
-
-# Old Flickr8k dataset
-flickr8k/
-flickr8k.zip
-data/raw/flickr8k/
-data/legacy/flickr8k/
-
-# =========================
-# Processed datasets / generated features
-# =========================
-data/processed/**
-!data/processed/.gitkeep
-!data/processed/**/.gitkeep
-
-*.npy
-*.npz
-*.pkl
-*.pickle
-*.parquet
-*.feather
-*.h5
-*.hdf5
-
-# Keep small template/example metadata files if needed
-!data/processed/**/*example*.csv
-!data/processed/**/*sample*.csv
-
-# =========================
-# Videos / media generated from datasets
-# =========================
-*.mp4
-*.avi
-*.mov
-*.mkv
-*.webm
-
-# Do not ignore documentation/demo images globally.
-# Dataset images are already excluded through data/raw/**.
-
-# =========================
-# Models and checkpoints
-# =========================
-checkpoints/
-models/
-weights/
-*.pt
-*.pth
-*.ckpt
-*.safetensors
-*.onnx
-
-# =========================
-# Milvus / Docker runtime data
-# =========================
-outputs/milvus/
-volumes/
-docker-data/
-
-# =========================
-# Runtime outputs
-# =========================
-outputs/logs/**
-outputs/temp_clips/**
-outputs/search_results/**
-outputs/submissions/**
-outputs/sessions/**
-
-# Preserve empty output folders
-!outputs/logs/.gitkeep
-!outputs/temp_clips/.gitkeep
-!outputs/search_results/.gitkeep
-!outputs/submissions/.gitkeep
-!outputs/sessions/.gitkeep
-
-# =========================
-# Frontend mock assets generated at runtime
-# =========================
-assets/mock/**
-!assets/mock/.gitkeep
-
-# =========================
-# Notebook generated files
-# =========================
-.ipynb_checkpoints/
-
-# Optional: uncomment if notebook outputs become too large
-# notebooks/**/*.html
-
-# =========================
-# Build / package artifacts
-# =========================
-build/
-dist/
-*.egg-info/
-
-data/milvus/
-outputs/
-data/raw/
-venv/
+.venv/
 __pycache__/
 *.pyc
-.env
+
+data/
+datasets/
+keyframes/
+features/
+outputs/
+volumes/
+
+*.zip
+*.npy
+*.db
+*.log
+compose-resolved.txt
+milvus-full.log
+
+node_modules/
+.vscode/
