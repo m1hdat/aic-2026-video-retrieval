@@ -34,4 +34,47 @@ class RetrievalService:
             output.append({**r,'answer':answer})
             if len(output)>=top_k: break
         return output
-    def search_trake(self, events, top_videos=10): return self.engine.search_sequence(events,top_videos)
+    def search_trake(self, events, top_videos=10):
+        rows = self.engine.search_sequence(events, top_videos)
+
+        for video_row in rows:
+            video_id = video_row.get("video_id", "")
+            adapted_hits = []
+
+            for hit in video_row.get("hits", []):
+                hit_video_id = hit.get("video_id") or video_id
+                keyframe_file = (
+                    hit.get("keyframe_file")
+                    or hit.get("keyframe_id")
+                    or ""
+                )
+                image_relpath = hit.get("image_relpath") or ""
+
+                image_path = None
+
+                if keyframe_file or image_relpath:
+                    try:
+                        image_path = get_image(
+                            hit_video_id,
+                            keyframe_file,
+                            image_relpath,
+                        )
+                    except Exception:
+                        image_path = None
+
+                adapted_hits.append(
+                    {
+                        **hit,
+                        "video_id": hit_video_id,
+                        "frame_id": hit.get(
+                            "frame_idx",
+                            hit.get("frame_id"),
+                        ),
+                        "keyframe_id": keyframe_file,
+                        "image_path": image_path,
+                    }
+                )
+
+            video_row["hits"] = adapted_hits
+
+        return rows
