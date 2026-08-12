@@ -2,6 +2,7 @@ from __future__ import annotations
 import argparse, csv, io, json, zipfile
 from pathlib import Path
 import numpy as np
+from src.settings import settings
 
 def members(path: Path, suffix: str):
     if path.is_dir():
@@ -30,9 +31,11 @@ def main():
             try:
                 arr=np.load(io.BytesIO(raw),allow_pickle=False)
                 rows=maps[video_id]; files=metas[video_id]["image_files"]
-                if arr.ndim != 2 or arr.shape[1] != 512: errors.append(f"{video_id}: shape {arr.shape}, cần [N,512]")
+                if arr.ndim != 2 or arr.shape[1] != settings.embedding_dim:
+                    errors.append(f"{video_id}: shape {arr.shape}, cần [N,{settings.embedding_dim}]")
                 if not (len(arr)==len(rows)==len(files)): errors.append(f"{video_id}: vector={len(arr)}, map={len(rows)}, JSON={len(files)}")
-                if metas[video_id].get("model") not in (None,"openai/clip-vit-base-patch32"): errors.append(f"{video_id}: sai CLIP model")
+                if metas[video_id].get("model") not in (None,settings.embedding_model):
+                    errors.append(f"{video_id}: sai model, cần {settings.embedding_model}")
                 ns=[int(float(r.get("n",r.get("keyframe_idx",i)))) for i,r in enumerate(rows)]
                 if len(ns)!=len(set(ns)): errors.append(f"{video_id}: n bị trùng")
                 for i,(n,name) in enumerate(zip(ns,files)):

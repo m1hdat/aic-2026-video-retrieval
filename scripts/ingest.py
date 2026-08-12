@@ -27,7 +27,7 @@ def parse_maps(path: Path):
 
 def main():
     ap=argparse.ArgumentParser()
-    ap.add_argument('--features', type=Path, action='append', required=True, help='ZIP/thư mục output CLIP; lặp 4 lần')
+    ap.add_argument('--features', type=Path, action='append', required=True, help='ZIP/thư mục output SigLIP2; lặp 4 lần')
     ap.add_argument('--maps', type=Path, required=True, help='ZIP/thư mục map-keyframes CSV')
     ap.add_argument('--batch-size', type=int, default=2000)
     args=ap.parse_args()
@@ -46,8 +46,16 @@ def main():
                 files=meta.get('image_files') or [f'{i:06d}.jpg' for i in range(len(rows))]
                 if len(vec)!=len(rows) or len(files)!=len(rows):
                     raise RuntimeError(f"{video_id}: vector={len(vec)}, map={len(rows)}, files={len(files)}")
-                if vec.ndim != 2 or vec.shape[1] != 512:
-                    raise RuntimeError(f"{video_id}: embedding shape phải là [N,512], nhận {vec.shape}")
+                if vec.ndim != 2 or vec.shape[1] != settings.embedding_dim:
+                    raise RuntimeError(
+                        f"{video_id}: embedding shape phải là "
+                        f"[N,{settings.embedding_dim}], nhận {vec.shape}"
+                    )
+                if meta.get('model') not in (None, settings.embedding_model):
+                    raise RuntimeError(
+                        f"{video_id}: model={meta.get('model')!r}, "
+                        f"cần {settings.embedding_model!r}"
+                    )
                 map_ns=[int(pick(r,'n','keyframe_idx','keyframe_id',default=i)) for i,r in enumerate(rows)]
                 if len(set(map_ns)) != len(map_ns): raise RuntimeError(f"{video_id}: n trong map bị trùng")
                 for i,(n,file) in enumerate(zip(map_ns,files)):

@@ -3,23 +3,50 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from PIL import Image
-from transformers import CLIPModel, CLIPProcessor
+from transformers import AutoModel, AutoProcessor
 from .settings import settings
 
 class TextEncoder:
     def __init__(self):
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.processor = CLIPProcessor.from_pretrained(settings.clip_model)
-        self.model = CLIPModel.from_pretrained(settings.clip_model).to(self.device).eval()
+        self.processor = AutoProcessor.from_pretrained(settings.embedding_model)
+        self.model = AutoModel.from_pretrained(settings.embedding_model).to(self.device).eval()
+
+    @staticmethod
+    def _unwrap_features(output) -> torch.Tensor:
+        """Transformers may return a tensor or BaseModelOutputWithPooling."""
+        if torch.is_tensor(output):
+            return output
+        pooled = getattr(output, "pooler_output", None)
+        if torch.is_tensor(pooled):
+            return pooled
+        raise TypeError(
+            "SigLIP2 feature output không được hỗ trợ: "
+            f"{type(output).__name__}"
+        )
+
+    @staticmethod
+    def _validate_dimension(output: torch.Tensor) -> torch.Tensor:
+        if output.ndim != 2 or output.shape[1] != settings.embedding_dim:
+            raise RuntimeError(
+                "Sai chiều embedding SigLIP2: "
+                f"nhận {tuple(output.shape)}, cần [N,{settings.embedding_dim}]"
+            )
+        return output
 
     def encode(self, texts: list[str]) -> np.ndarray:
-        batch = self.processor(text=texts, return_tensors="pt", padding=True, truncation=True)
+        # SigLIP2 was trained with fixed-length text padding.
+        batch = self.processor(
+            text=texts,
+            return_tensors="pt",
+            padding="max_length",
+            max_length=64,
+            truncation=True,
+        )
         batch = {k: v.to(self.device) for k, v in batch.items()}
         with torch.inference_mode():
-            output = self.model.get_text_features(**batch)
-            if not isinstance(output, torch.Tensor):
-                text_out = self.model.text_model(**batch, return_dict=True)
-                output = self.model.text_projection(text_out.pooler_output)
+            output = self._unwrap_features(self.model.get_text_features(**batch))
+            output = self._validate_dimension(output)
             output = F.normalize(output, p=2, dim=-1)
         return output.cpu().numpy().astype("float32")
 
@@ -27,9 +54,7 @@ class TextEncoder:
         batch = self.processor(images=images, return_tensors="pt")
         batch = {k: v.to(self.device) for k, v in batch.items()}
         with torch.inference_mode():
-            output = self.model.get_image_features(**batch)
-            if not isinstance(output, torch.Tensor):
-                vision_out = self.model.vision_model(**batch, return_dict=True)
-                output = self.model.visual_projection(vision_out.pooler_output)
+            output = self._unwrap_features(self.model.get_image_features(**batch))
+            output = self._validate_dimension(output)
             output = F.normalize(output, p=2, dim=-1)
         return output.cpu().numpy().astype("float32")
