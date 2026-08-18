@@ -1,0 +1,14 @@
+LENH TERMINAL:
+cd "D:\24CNTN_HCMUS\Project\AIC26_web"
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+.\.venv\Scripts\Activate.ps1
+docker start aic-minio
+docker compose up -d
+docker restart aic-milvus
+Start-Sleep -Seconds 30
+python -c "from pymilvus import MilvusClient; c=MilvusClient(uri='http://127.0.0.1:19530'); print(c.list_collections())"
+$env:ENABLE_OCR_SEARCH = "true"
+$env:ENABLE_OBJECT_SEARCH = "true"
+$env:ENABLE_FRAME_REFINE = "true"
+$env:AUTO_FRAME_REFINE = "false"
+.\START_WEB.ps1
