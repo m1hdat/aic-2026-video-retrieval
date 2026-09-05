@@ -1,496 +1,239 @@
-# HƯỚNG DẪN CHẠY AIC 2026 VIDEO RETRIEVAL
+# AIC 2026 Multimodal Video Retrieval
 
-Tài liệu này dành cho thành viên vừa clone project và chưa cài đặt gì. Làm lần lượt từ trên xuống, không bỏ qua bước kiểm tra dữ liệu.
+An end-to-end retrieval system for the **AI Challenge 2026**, designed to search a large Vietnamese video collection and produce submission-ready results for **KIS**, **QA**, and **TRAKE** tasks.
 
-Project hỗ trợ ba chế độ:
+The system combines vision-language embeddings with OCR and object-level evidence, maps sparse keyframes back to native video frames, and provides an interactive interface for reviewing and refining results before export.
 
-- **KIS:** tìm video/keyframe từ mô tả.
-- **QA:** tìm keyframe rồi trả lời câu hỏi về hình ảnh.
-- **TRAKE:** tìm nhiều sự kiện liên tiếp trong cùng video.
 
-Hệ thống dùng **SigLIP2 + Milvus + PostgreSQL**, có thể kết hợp thêm **OCR**, **Object Detection** và **frame refinement**.
+## Overview
 
----
+Searching long-form videos from natural-language descriptions is more than a nearest-neighbor problem. A correct result may depend on visual appearance, text shown on screen, detected objects, event order, or an exact frame that is absent from the sampled keyframes.
 
-## 1. Máy cần có gì?
+This project addresses those requirements through a hybrid pipeline:
 
-Bắt buộc:
+- Semantic text-to-image retrieval over approximately 470,000 keyframes.
+- Vietnamese and English query support with configurable translation.
+- OCR full-text search for titles, captions, signs, and on-screen text.
+- Object detections as supporting evidence for visual concepts and counts.
+- Query-aware score fusion instead of a fixed ranking rule for every query.
+- Temporal sequence search for multi-event TRAKE queries.
+- Native-frame refinement around coarse 1 FPS keyframes.
+- Local visual review, manual reranking, and CSV export.
 
-- Windows 10/11 64-bit.
-- Git.
-- Python **3.11**.
-- Docker Desktop và Docker Compose.
-- Tối thiểu khoảng 16 GB RAM được khuyến nghị.
-- Đủ dung lượng cho Docker volumes, keyframe và video.
+## System Architecture
 
-Kiểm tra trong PowerShell:
+```mermaid
+flowchart TD
+    A["Vietnamese or English query"] --> B["Query processing"]
+    B --> C["Visual-semantic retrieval"]
+    B --> D["OCR and object retrieval"]
+    C --> E["Hybrid fusion and reranking"]
+    D --> E
+    E --> F["PostgreSQL metadata mapping"]
+    F --> G["Temporal deduplication"]
+    G --> H["KIS / QA / TRAKE logic"]
+    H --> I["Native-frame refinement"]
+    I --> J["Review and submission export"]
+```
+
+### Storage design
+
+| Component | Responsibility |
+| --- | --- |
+| **Milvus** | Stores normalized keyframe embeddings and performs cosine-similarity search. |
+| **PostgreSQL** | Stores video metadata, keyframe-to-frame mappings, OCR text, and object detections. |
+| **Local keyframes** | Supplies images for the result gallery and visual question answering. |
+| **Original videos / ZIP archives** | Supplies native frames only when frame refinement is requested. |
+| **Docker volumes** | Persists Milvus, etcd, and PostgreSQL data between runs. |
+
+Images, videos, and NumPy feature files are not stored inside PostgreSQL. Feature archives are needed for ingestion or recovery, but not for normal retrieval after their vectors have been persisted in Milvus.
+
+## Retrieval Pipeline
+
+### 1. Query processing
+
+The input query is normalized and optionally translated from Vietnamese to English. The retrieval engine preserves the original query and creates several semantic variants, including photo- and video-oriented prompts.
+
+```text
+Original query
+  -> optional Vietnamese-to-English translation
+  -> original + translated + prompt variants
+  -> normalized text embeddings
+```
+
+The text encoder must always match the image encoder used during feature extraction. The project supports configurable vision-language collections, including:
+
+| Encoder | Embedding size | Milvus collection example |
+| --- | ---: | --- |
+| `openai/clip-vit-base-patch32` | 512 | `aic2026_keyframes` |
+| `google/siglip2-base-patch16-224` | 768 | `aic2026_siglip2_keyframes` |
+
+Vectors from different models are never mixed in the same collection.
+
+### 2. Visual-semantic search
+
+Every query variant is encoded and searched independently in Milvus using cosine similarity. Candidate lists are first combined with **Reciprocal Rank Fusion (RRF)**, while the best raw similarity score is retained for later reranking.
+
+The Milvus index uses `IVF_SQ8` with configurable search parameters to balance memory usage and retrieval latency on a local workstation.
+
+### 3. Auxiliary evidence
+
+Two optional PostgreSQL retrieval branches complement the visual embedding:
+
+- **OCR:** searches on-screen text with full-text indexing, phrase matching, acronym aliases, confidence, and query-term coverage.
+- **Object detection:** searches COCO class labels and uses detection confidence and object count as supporting signals.
+
+OCR receives a stronger contribution when the query explicitly asks for visible text or when a large portion of the query matches a detected phrase. Object detections remain secondary evidence because common classes such as `person`, `car`, or `tv` are not sufficiently discriminative by themselves.
+
+ASR is maintained as an optional extension for speech-dependent queries and can be integrated through the existing `text_segments` schema without changing the visual index.
+
+### 4. Hybrid fusion and reranking
+
+Scores from different retrieval systems are normalized before fusion:
+
+```text
+final_score = wv * visual_similarity
+            + wr * visual_RRF
+            + wo * OCR_RRF
+            + wb * object_RRF
+```
+
+The weights are selected from the detected query profile. Text-oriented queries prioritize OCR, while ordinary scene queries keep the visual embedding dominant. Results are then mapped from `(video_id, keyframe_n)` to the official `frame_idx` through PostgreSQL.
+
+Near-duplicate hits from the same video are suppressed within a short temporal window, improving diversity in the final gallery.
+
+### 5. Native-frame refinement
+
+Keyframes sampled at 1 FPS are effective for locating a video segment but may not represent the exact frame required for submission. For a selected result, the system:
+
+1. Opens the original MP4 or extracts only the requested video from its ZIP archive.
+2. Reads native frames within a configurable window around the coarse keyframe.
+3. Re-encodes those frames with the same vision-language model.
+4. Selects the frame with the highest query similarity.
+5. Updates the result while preserving temporal order for TRAKE.
+
+Refinement can be automatic, but the default workflow is manual so the initial search remains responsive.
+
+## Supported Tasks
+
+### KIS — Known-Item Search
+
+KIS retrieves frames that best match a natural-language scene description.
+
+```mermaid
+flowchart LR
+    A["Scene description"] --> B["Hybrid retrieval"]
+    B --> C["Ranked keyframes"]
+    C --> D["Optional refine"]
+    D --> E["video_id, frame_id"]
+```
+
+The interface exposes matched sources and supporting OCR/object evidence, allowing users to inspect, promote, remove, or refine individual results before export.
+
+### QA — Visual Question Answering
+
+QA separates **where to look** from **what to answer**:
+
+1. The event description retrieves candidate frames.
+2. OCR context is used for simple text-based answers when applicable.
+3. Otherwise, `Salesforce/blip-vqa-base` answers the question from each candidate image.
+4. Refining a result reruns VQA on the newly selected native frame.
+
+This produces rows in the form:
+
+```text
+video_id, frame_id, answer
+```
+
+### TRAKE — Temporal Event Sequence Retrieval
+
+Each event is retrieved independently, after which candidates are grouped by video. A dynamic-programming stage finds the highest-scoring sequence whose frame indices are strictly increasing.
+
+```mermaid
+flowchart TD
+    A["Ordered event descriptions"] --> B["Batched retrieval per event"]
+    B --> C["Group candidates by video"]
+    C --> D["Dynamic programming"]
+    D --> E["Best increasing frame sequence"]
+    E --> F["Sequence-safe refinement"]
+```
+
+Unlike a greedy selection strategy, dynamic programming evaluates complete temporal paths and retains the best valid sequence across all events.
+
+## Interface
+
+The Gradio application provides three dedicated workspaces:
+
+- Result galleries with frame IDs, scores, and matched retrieval sources.
+- Side-by-side event visualization for TRAKE sequences.
+- Manual frame refinement from a selected rank.
+- Result promotion and deletion without rerunning retrieval.
+- UTF-8 CSV export with the correct schema for each task.
+
+## Technology Stack
+
+| Area | Technologies |
+| --- | --- |
+| Vision-language retrieval | PyTorch, Hugging Face Transformers, CLIP / SigLIP2 |
+| Vector database | Milvus Standalone, cosine similarity, IVF_SQ8 |
+| Metadata and text search | PostgreSQL, generated `tsvector`, GIN indexes |
+| Visual QA | BLIP VQA |
+| Video processing | OpenCV |
+| User interface | Gradio |
+| Infrastructure | Docker Compose, etcd |
+| Data processing | NumPy, pandas, PyArrow |
+
+## Repository Structure
+
+```text
+.
+├── frontend/              # Gradio interface and retrieval service
+├── src/                   # Search, fusion, VQA, refinement, and storage logic
+├── scripts/               # Validation, ingestion, migration, and verification
+├── sql/                   # PostgreSQL schema and signal migrations
+├── config/                # Dataset path conventions
+├── tests/                 # Identity, translation, refinement, and export tests
+├── docker-compose.yml     # Milvus, etcd, and PostgreSQL services
+├── execute.md             # Complete installation and operation guide
+└── README.md
+```
+
+## Quick Start
+
+The complete setup, ingestion, configuration, and troubleshooting guide is available in [execute.md](execute.md).
+
+For an already-ingested environment:
 
 ```powershell
-git --version
-py -3.11 --version
-docker --version
-docker compose version
+docker compose up -d
+.\START_WEB.ps1
 ```
 
-Sau đó mở **Docker Desktop** và đợi đến khi Docker báo đang chạy.
+Open `http://127.0.0.1:7860`.
 
-> Máy không có NVIDIA GPU vẫn chạy được, nhưng SigLIP2, QA và frame refine sẽ chậm hơn nhiều trên CPU.
-
----
-
-## 2. Clone project
-
-```powershell
-cd "THU_MUC_MUON_LUU_PROJECT"
-git clone https://github.com/m1hdat/aic-2026-video-retrieval.git
-cd aic-2026-video-retrieval
-```
-
-Kiểm tra đã vào đúng thư mục:
-
-```powershell
-Get-ChildItem
-```
-
-Phải thấy các file như:
-
-```text
-setup.ps1
-START_WEB.ps1
-docker-compose.yml
-requirements.txt
-.env.example
-```
-
----
-
-## 3. Dữ liệu bắt buộc
-
-### 3.1. Để chạy retrieval và xem kết quả
-
-Cần có:
-
-1. **SigLIP2 features** của tất cả video.
-2. **Map-keyframe CSV**.
-3. **Ảnh keyframe JPG** trên ổ máy.
-
-Mỗi video phải khớp cùng `video_id`, ví dụ `L21_V001`:
-
-```text
-L21_V001.npy   # shape [N, 768]
-L21_V001.json  # image_files đúng thứ tự N vector
-L21_V001.csv   # có n, frame_idx, pts_time, fps
-```
-
-Điều kiện quan trọng:
-
-- `.npy` phải được extract bằng `google/siglip2-base-patch16-224`.
-- Vector phải có **768 chiều** và đã normalize.
-- Không được dùng lẫn feature CLIP 512 chiều với collection SigLIP2 768 chiều.
-- Số vector trong `.npy`, số `image_files` trong JSON và số keyframe hợp lệ phải khớp.
-- `video_id + n` trong feature/map phải thống nhất.
-- CSV map phải có `frame_idx`; đây là frame ID dùng để nộp bài.
-- Ảnh JPG phải giữ đúng tên/thứ tự tương ứng với `n`.
-
-Ví dụ cấu trúc ảnh được project tự nhận:
-
-```text
-D:\AIC2026_DATA\keyframes\Keyframes_L21\keyframes\L21_V001\000010.jpg
-D:\AIC2026_DATA\keyframes\keyframes\L21_V001\000010.jpg
-D:\AIC2026_DATA\keyframes\L21_V001\000010.jpg
-```
-
-### 3.2. Khi bật frame refinement
-
-Phải có thêm video gốc `.mp4` hoặc ZIP chứa video, ví dụ:
-
-```text
-D:\AIC2026_DATA\videos\Videos_L21\video\L21_V001.mp4
-D:\AIC2026_DATA\videos\video_part1.zip
-```
-
-Nếu không có video gốc, đặt:
+Core model configuration is controlled through `.env`:
 
 ```dotenv
-ENABLE_FRAME_REFINE=false
-```
-
-Retrieval chính vẫn chạy bình thường; chỉ không tinh chỉnh từ keyframe 1 FPS sang native frame.
-
-### 3.3. OCR và Object Detection
-
-Đây là dữ liệu bổ sung để tăng khả năng tìm chữ/vật thể. Có thể là thư mục, `.zip`, `.jsonl`, `.csv` hoặc `.parquet`.
-
-Ví dụ:
-
-```text
-D:\AIC2026_SIGNALS\ocr\ocr_L21.zip
-D:\AIC2026_SIGNALS\objects\objects_part1.zip
-```
-
-Nếu chưa có dữ liệu này, đặt:
-
-```dotenv
-ENABLE_OCR_SEARCH=false
-ENABLE_OBJECT_SEARCH=false
-```
-
----
-
-## 4. Cài project lần đầu
-
-Trong PowerShell tại thư mục project:
-
-```powershell
-Set-ExecutionPolicy -Scope Process Bypass
-.\setup.ps1
-```
-
-Script sẽ:
-
-- Tạo `.env` từ `.env.example` nếu chưa có.
-- Tạo môi trường Python `.venv`.
-- Cài dependency trong `requirements.txt`.
-- Khởi động PostgreSQL, Milvus và các container liên quan.
-
-Nếu PowerShell vẫn chặn script, chạy từng lệnh bằng tiền tố:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\setup.ps1
-```
-
----
-
-## 5. Sửa file `.env`
-
-Mở `.env` bằng VS Code/Notepad và sửa đường dẫn theo máy đang chạy. Không sửa mỗi `.env.example`, vì chương trình đọc `.env`.
-
-Ví dụ:
-
-```dotenv
-POSTGRES_HOST=localhost
-POSTGRES_PORT=5432
-POSTGRES_DB=aic2026
-POSTGRES_USER=aic
-POSTGRES_PASSWORD=aic2026
-
-MILVUS_URI=http://localhost:19530
-MILVUS_COLLECTION=aic2026_siglip2_keyframes
-EMBEDDING_MODEL=google/siglip2-base-patch16-224
-EMBEDDING_DIM=768
-
-APP_HOST=127.0.0.1
-APP_PORT=7860
-
-KEYFRAME_ROOTS=D:\AIC2026_DATA\keyframes
-VIDEO_ROOTS=D:\AIC2026_DATA\videos
-
-ENABLE_GOOGLE_TRANSLATE=true
-GOOGLE_TRANSLATE_API_KEY=API_KEY_CUA_NHOM
-GOOGLE_TRANSLATE_TIMEOUT=10
+MILVUS_COLLECTION=aic2026_keyframes
+EMBEDDING_MODEL=openai/clip-vit-base-patch32
+EMBEDDING_DIM=512
 
 ENABLE_OCR_SEARCH=true
 ENABLE_OBJECT_SEARCH=true
-SIGNAL_CANDIDATE_K=300
-
 ENABLE_FRAME_REFINE=true
-REFINE_TOP_N=1
-TRAKE_REFINE_TOP_N=1
-REFINE_SECONDS=0.6
-REFINE_STRIDE=6
-REFINE_BATCH_SIZE=8
-REFINE_MIN_GAIN=0.003
+AUTO_FRAME_REFINE=false
 ```
 
-Có nhiều thư mục keyframe/video thì ngăn cách bằng dấu `;`:
+Changing the embedding model also requires selecting the matching Milvus collection. Existing collections can be reused without downloading or ingesting their original `.npy` files again.
 
-```dotenv
-KEYFRAME_ROOTS=D:\DataPart1\keyframes;E:\DataPart2\keyframes
-VIDEO_ROOTS=D:\Videos;E:\VideoZips
-```
+## Design Constraints
 
-Lưu ý:
+- Retrieval quality depends on the consistency of the embedding model used for indexing and querying.
+- Sparse 1 FPS keyframes can miss short actions; native-frame refinement reduces this error but requires access to the original video.
+- BLIP VQA is a local visual baseline and may be unreliable for domain-specific knowledge or long textual answers.
+- OCR and object detection improve candidate ranking but do not replace semantic visual retrieval.
+- The current system is optimized for local competition use rather than multi-user production deployment.
 
-- Không commit hoặc gửi file `.env` lên GitHub vì có thể chứa API key.
-- Nếu chưa có Google Translate API key, đặt `ENABLE_GOOGLE_TRANSLATE=false`.
-- Nếu chưa có OCR/Object, tắt hai cờ tương ứng.
-- Frame refine trên CPU rất chậm. Có thể đặt `ENABLE_FRAME_REFINE=false` để trả kết quả nhanh.
-- Các biến `$env:...` đã đặt trong PowerShell có thể ghi đè `.env`. Nếu nghi ngờ, đóng PowerShell rồi mở cửa sổ mới.
+## Acknowledgements
 
----
-
-## 6. Khởi tạo PostgreSQL và Milvus
-
-Chạy sau khi Docker Desktop đã mở:
-
-```powershell
-.\INIT_DB_AND_MILVUS.ps1
-```
-
-Kiểm tra container:
-
-```powershell
-docker compose ps
-```
-
-Các service chính phải có trạng thái `Up` hoặc `running`. Nếu Milvus chưa sẵn sàng, đợi khoảng 30–60 giây rồi chạy lại `INIT_DB_AND_MILVUS.ps1`.
-
----
-
-## 7. Validate và ingest SigLIP2 + map
-
-Phần này chỉ cần làm khi máy/Docker volumes chưa có dữ liệu retrieval.
-
-### 7.1. Validate trước
-
-Thay các đường dẫn bằng đúng file trên máy:
-
-```powershell
-.\VALIDATE_DATA.ps1 `
-  -Features @(
-    "D:\AIC_DATA\siglip2_features_part1.zip",
-    "D:\AIC_DATA\siglip2_features_part2.zip",
-    "D:\AIC_DATA\siglip2_features_part3.zip",
-    "D:\AIC_DATA\siglip2_features_part4.zip"
-  ) `
-  -Maps "D:\AIC_DATA\map_keyframes_batch1.zip"
-```
-
-Chỉ ingest khi script báo dữ liệu hợp lệ. Nếu báo dimension 512, đó là feature CLIP cũ và không dùng được cho collection 768 chiều hiện tại.
-
-### 7.2. Ingest
-
-```powershell
-.\INGEST.ps1 `
-  -Features @(
-    "D:\AIC_DATA\siglip2_features_part1.zip",
-    "D:\AIC_DATA\siglip2_features_part2.zip",
-    "D:\AIC_DATA\siglip2_features_part3.zip",
-    "D:\AIC_DATA\siglip2_features_part4.zip"
-  ) `
-  -Maps "D:\AIC_DATA\map_keyframes_batch1.zip"
-```
-
-Có thể ingest từng part để tiết kiệm ổ cứng. Script dùng upsert nên chạy lại không tạo bản ghi trùng.
-
-Kiểm tra sau ingest:
-
-```powershell
-.\VERIFY.ps1
-```
-
-Chỉ chuyển sang bước tiếp theo khi PostgreSQL và Milvus khớp số lượng/khóa `video_id + n`.
-
----
-
-## 8. Ingest OCR/Object (nếu có)
-
-Không cần ingest lại SigLIP2.
-
-Chạy migration một lần:
-
-```powershell
-.\MIGRATE_SIGNALS.ps1
-```
-
-Ingest file thực tế của nhóm:
-
-```powershell
-.\INGEST_SIGNALS.ps1 `
-  -Objects @(
-    "D:\AIC2026_SIGNALS\objects\objects_part1.zip",
-    "D:\AIC2026_SIGNALS\objects\objects_part2.zip",
-    "D:\AIC2026_SIGNALS\objects\objects_part3.zip",
-    "D:\AIC2026_SIGNALS\objects\objects_part4.zip"
-  ) `
-  -Ocr @(
-    "D:\AIC2026_SIGNALS\ocr\ocr_L21.zip",
-    "D:\AIC2026_SIGNALS\ocr\ocr_L22.zip"
-  )
-```
-
-Không cần dùng đúng tên ví dụ; chỉ cần truyền đúng đường dẫn các file thật.
-
-Kiểm tra:
-
-```powershell
-.\VERIFY_SIGNALS.ps1
-```
-
-Kết quả mong đợi:
-
-- `OCR rows > 0` nếu đã ingest OCR.
-- `Object detections > 0` nếu đã ingest Object.
-- Có dòng `VERIFY SIGNALS OK`.
-
----
-
-## 9. Chạy web
-
-Mỗi lần mở máy:
-
-1. Mở Docker Desktop.
-2. Mở PowerShell tại thư mục project.
-3. Chạy:
-
-```powershell
-Set-ExecutionPolicy -Scope Process Bypass
-docker compose up -d
-.\START_WEB.ps1
-```
-
-Mở trình duyệt tại:
-
-```text
-http://127.0.0.1:7860
-```
-
-Dừng web bằng `Ctrl+C`. Dừng container khi không dùng nữa:
-
-```powershell
-docker compose down
-```
-
-**Không chạy `docker compose down -v`**, vì `-v` sẽ xóa dữ liệu PostgreSQL và Milvus đã ingest.
-
----
-
-## 10. Checklist trước khi thi
-
-Chạy:
-
-```powershell
-docker compose ps
-.\VERIFY.ps1
-.\VERIFY_SIGNALS.ps1
-.\CHECK_FRAME_REFINE.ps1
-```
-
-Sau đó kiểm tra thủ công:
-
-- [ ] Web mở được tại `127.0.0.1:7860`.
-- [ ] KIS trả được gallery và đúng `video_id, frame_id`.
-- [ ] QA trả được `video_id, frame_id, answer`.
-- [ ] TRAKE trả các frame cùng video theo đúng thứ tự thời gian.
-- [ ] Ảnh keyframe hiển thị, không bị `file not found`.
-- [ ] Query tiếng Việt dịch được; nếu API lỗi thì tắt Google Translate và dùng tiếng Anh.
-- [ ] OCR/Object có nguồn khớp nếu đã ingest signals.
-- [ ] Frame refine không làm query vượt thời gian cho phép.
-- [ ] Thử ít nhất hai query khó cho mỗi loại trước ngày thi.
-
-Với thời gian thi khoảng 2 giờ cho khoảng 30 câu, không nên để một query chạy hàng trăm giây. Nếu chậm, ưu tiên:
-
-```dotenv
-ENABLE_FRAME_REFINE=false
-```
-
-hoặc chỉ refine top 1 bằng cấu hình nhanh trong phần `.env` ở trên.
-
----
-
-## 11. Lỗi thường gặp
-
-### PowerShell báo script không được ký
-
-```powershell
-Set-ExecutionPolicy -Scope Process Bypass
-```
-
-Sau đó chạy lại script. Scope `Process` chỉ áp dụng cho cửa sổ PowerShell hiện tại.
-
-### `docker` không kết nối được
-
-- Mở Docker Desktop.
-- Đợi Docker chạy hoàn toàn.
-- Chạy `docker compose up -d`.
-
-### Milvus báo connection refused tại port 19530
-
-```powershell
-docker compose ps
-docker compose up -d
-```
-
-Đợi 30–60 giây rồi chạy lại `INIT_DB_AND_MILVUS.ps1`.
-
-### PostgreSQL báo thiếu bảng/relation
-
-```powershell
-.\INIT_DB_AND_MILVUS.ps1
-.\MIGRATE_SIGNALS.ps1
-```
-
-### Không thấy ảnh keyframe
-
-- Kiểm tra `KEYFRAME_ROOTS` trong `.env`.
-- Kiểm tra thư mục có chứa đúng `video_id` như `L21_V001`.
-- Kiểm tra JPG vẫn còn trên ổ máy.
-- Restart web sau khi sửa `.env`.
-
-### Refine không chạy hoặc không tìm thấy video
-
-- Kiểm tra `ENABLE_FRAME_REFINE=true`.
-- Kiểm tra `VIDEO_ROOTS`.
-- Kiểm tra video/ZIP thực sự chứa đúng `video_id`.
-- Nếu không cần refine, tắt nó để retrieval vẫn chạy.
-
-### Query rất chậm
-
-- Đặt `ENABLE_FRAME_REFINE=false` để xác định refine có phải nguyên nhân không.
-- Trên CPU, dùng `REFINE_TOP_N=1`, `REFINE_SECONDS=0.6`, `REFINE_STRIDE=6`.
-- Không bật QA nếu chỉ cần KIS.
-- Không chạy ingest trong lúc đang thi/query.
-
-### Đổi `.env` nhưng chương trình vẫn dùng giá trị cũ
-
-Dừng web bằng `Ctrl+C`, đóng PowerShell, mở cửa sổ mới rồi chạy lại. Có thể kiểm tra cấu hình refine bằng:
-
-```powershell
-& ".\.venv\Scripts\python.exe" -c "from src.settings import settings; print(settings.enable_frame_refine, settings.refine_top_n, settings.refine_seconds, settings.refine_stride)"
-```
-
----
-
-## 12. Cập nhật code mới từ GitHub
-
-Không chạy lại `git clone` nếu đã có project. Trong thư mục project:
-
-```powershell
-git status
-git pull origin main
-& ".\.venv\Scripts\python.exe" -m pip install -r requirements.txt
-docker compose up -d
-.\START_WEB.ps1
-```
-
-Nếu `git status` có code đang sửa, không pull/ghi đè bừa. Commit hoặc hỏi người phụ trách repo trước.
-
-File `.env` và Docker volumes nằm ở máy local, bình thường không bị `git pull` xóa.
-
----
-
-## 13. Tóm tắt cực ngắn
-
-### Máy mới, chưa có dữ liệu database
-
-```powershell
-git clone https://github.com/m1hdat/aic-2026-video-retrieval.git
-cd aic-2026-video-retrieval
-Set-ExecutionPolicy -Scope Process Bypass
-.\setup.ps1
-# Sửa .env
-.\INIT_DB_AND_MILVUS.ps1
-# VALIDATE_DATA.ps1 -> INGEST.ps1 -> VERIFY.ps1
-# Nếu có OCR/Object: MIGRATE_SIGNALS.ps1 -> INGEST_SIGNALS.ps1 -> VERIFY_SIGNALS.ps1
-.\START_WEB.ps1
-```
-
-### Máy đã ingest dữ liệu rồi
-
-```powershell
-Set-ExecutionPolicy -Scope Process Bypass
-docker compose up -d
-.\START_WEB.ps1
-```
-
-> Nhớ: code nằm trên GitHub, nhưng features, map, keyframe, video, OCR/Object và Docker database không tự xuất hiện sau khi clone. Nhóm phải chép/tải đúng bộ dữ liệu sang máy chạy hệ thống.
+Developed for the **AI Challenge 2026** video retrieval track as a practical exploration of multimodal search, temporal reasoning, and human-in-the-loop result refinement.
