@@ -19,3 +19,6 @@ milvus-full.log
 
 node_modules/
 .vscode/
+/*.ps1
+/.env.example
+/requirements.txt
